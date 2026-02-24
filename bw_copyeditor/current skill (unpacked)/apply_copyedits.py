@@ -50,6 +50,67 @@ XML_NS = "http://www.w3.org/XML/1998/namespace"
 AUTHOR = "Claude"
 RSID = "00AA0001"
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  ENSURE COMMENTS.XML FILE EXISTS
+# ═══════════════════════════════════════════════════════════════════════════
+def ensure_comments_infrastructure(work_dir, src_docx):
+    """Ensure comments.xml exists and is registered in rels and [Content_Types].xml."""
+
+    comments_path = os.path.join(work_dir, "word", "comments.xml")
+    rels_path = os.path.join(work_dir, "word", "_rels", "document.xml.rels")
+    ct_path = os.path.join(work_dir, "[Content_Types].xml")
+
+    COMMENTS_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+    COMMENTS_CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"
+    CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+    # 1. Create comments.xml if missing
+    if not os.path.exists(comments_path):
+        nsmap = {
+            'w': W,
+            'w14': W14,
+            'w15': W15,
+            'r': "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            'mc': "http://schemas.openxmlformats.org/markup-compatibility/2006",
+        }
+        root = etree.Element(f'{{{W}}}comments', nsmap=nsmap)
+        tree = etree.ElementTree(root)
+        tree.write(comments_path, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+    # 2. Add relationship if missing
+    _parser = etree.XMLParser(remove_blank_text=False)
+    rels_tree = etree.parse(rels_path, _parser)
+    rels_root = rels_tree.getroot()
+    max_rid = 0
+    has_rel = False
+    for rel in rels_root:
+        rid = rel.get('Id', '')
+        if rid.startswith('rId'):
+            try:
+                max_rid = max(max_rid, int(rid[3:]))
+            except ValueError:
+                pass
+        if rel.get('Type') == COMMENTS_REL_TYPE:
+            has_rel = True
+    if not has_rel:
+        rel_elem = etree.SubElement(rels_root, 'Relationship')
+        rel_elem.set('Id', f'rId{max_rid + 1}')
+        rel_elem.set('Type', COMMENTS_REL_TYPE)
+        rel_elem.set('Target', 'comments.xml')
+        rels_tree.write(rels_path, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+    # 3. Add content type if missing
+    ct_tree = etree.parse(ct_path, _parser)
+    ct_root = ct_tree.getroot()
+    has_ct = any(
+        o.get('PartName') == '/word/comments.xml'
+        for o in ct_root.findall(f'{{{CT_NS}}}Override')
+    )
+    if not has_ct:
+        override = etree.SubElement(ct_root, f'{{{CT_NS}}}Override')
+        override.set('PartName', '/word/comments.xml')
+        override.set('ContentType', COMMENTS_CT)
+        ct_tree.write(ct_path, xml_declaration=True, encoding='UTF-8', standalone=True)
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  PARSE FINDINGS
@@ -429,15 +490,13 @@ def main():
     doc_tree = etree.parse(doc_path, parser)
     doc_root = doc_tree.getroot()
 
+    # Ensure comments.xml and its relationships/content types exist
+    # (no-ops if everything is already in place)
+    ensure_comments_infrastructure(work_dir, src_docx)
+
     comments_path = os.path.join(work_dir, "word", "comments.xml")
-    has_comments_file = os.path.exists(comments_path)
-    if has_comments_file:
-        comments_tree = etree.parse(comments_path, parser)
-        comments_root = comments_tree.getroot()
-    else:
-        # Create a minimal comments.xml if none exists
-        comments_root = etree.Element(f'{{{W}}}comments')
-        comments_tree = etree.ElementTree(comments_root)
+    comments_tree = etree.parse(comments_path, parser)
+    comments_root = comments_tree.getroot()
 
     footnotes_path = os.path.join(work_dir, "word", "footnotes.xml")
     footnotes_tree = None
@@ -642,6 +701,10 @@ def main():
     # Preserve original ZIP entry order
     with zipfile.ZipFile(src_docx, 'r') as orig:
         orig_names = orig.namelist()
+
+    # Include comments.xml if it was newly created
+    if 'word/comments.xml' not in orig_names:
+        orig_names.append('word/comments.xml')
 
     with zipfile.ZipFile(output_docx, 'w', zipfile.ZIP_DEFLATED) as zf:
         for name in orig_names:
