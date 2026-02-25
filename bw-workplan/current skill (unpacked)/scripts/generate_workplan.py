@@ -11,10 +11,10 @@ Usage:
 
 import json
 import os
+import shutil
 import sys
 import subprocess
 from datetime import datetime, date, timedelta
-from io import SEEK_SET
 
 # ── Auto-install openpyxl ─────────────────────────────────────────────────────
 try:
@@ -53,7 +53,8 @@ GRAY    = "FFD9D9D9"
 GRAY_FONT = "FF808080"
 
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(SCRIPT_DIR, "assets", "workplan-template.xlsx")
+SKILL_DIR    = os.path.dirname(SCRIPT_DIR)
+TEMPLATE_PATH = os.path.join(SKILL_DIR, "assets", "workplan-template.xltx")
 
 # Max weeks the Project Timeline template supports (cols B–Z = 25 columns)
 MAX_WEEKS = 25
@@ -263,17 +264,12 @@ def fill_workplan(ws, data):
         ),
     )
 
-    # Replace/expand data validation to cover E2:E1000
-    dv = DataValidation(
-        type="list",
-        formula1='"Not started,To-Do,In progress,Completed"',
-        allow_blank=True,
-        showDropDown=False,
-    )
-    dv.sqref = f"E{WP_DATA_START}:E1000"
-    # Remove old validations to avoid duplicates
-    ws.data_validations.dataValidation = []
-    ws.add_data_validation(dv)
+    # Expand the status data validation range to cover all task rows.
+    # Preserve other validations (phase, workstream, owner) from the template.
+    for dv in ws.data_validations.dataValidation:
+        if dv.type == "list" and dv.formula1 and "Not started" in dv.formula1:
+            dv.sqref = f"E{WP_DATA_START}:E1000"
+            break
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -300,8 +296,10 @@ def main():
         print(f"Error: template not found at {TEMPLATE_PATH}", file=sys.stderr)
         sys.exit(1)
 
-    # Open template
-    wb = openpyxl.load_workbook(TEMPLATE_PATH)
+    # Copy template to output path first (preserves all formatting intact),
+    # then open and modify the copy — the original template is never touched.
+    shutil.copy2(TEMPLATE_PATH, output_path)
+    wb = openpyxl.load_workbook(output_path)
     cover    = wb["Cover Sheet"]
     timeline = wb["Project Timeline"]
     workplan = wb["Detailed Workplan"]
@@ -322,7 +320,7 @@ def main():
     n_tasks = len(data.get("tasks", []))
     print(f"  {n_tasks} task rows written")
 
-    # Save
+    # Save (overwrites the copy, not the template)
     wb.save(output_path)
     size = os.path.getsize(output_path)
 
