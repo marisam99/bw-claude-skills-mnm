@@ -1,6 +1,6 @@
 ---
 name: bw-workplan
-description: Generate a project workplan spreadsheet (.xlsx) from a Statement of Work, proposal, or project description. Reads the document, accepts project start and end dates, team member names, cost code, and PTO/OOO dates, extracts phases, workstreams, tasks, deliverables, and milestones, estimates durations, backwards-maps deadlines from the final due date, checks feasibility, and produces a formatted Excel file based on the Bellwether workplan template (Cover Sheet, Project Timeline, Detailed Workplan). Use when the user asks to build a workplan, project schedule, or task timeline.
+description: Generate a project workplan spreadsheet (.xlsx) from a Statement of Work, proposal, or project description. Use when the user asks to build a workplan, project plan, project schedule, task timeline, or Gantt-style tracker — especially for Bellwether consulting projects. Also trigger when the user uploads a SOW and asks to turn it into a schedule or timeline, or mentions "workplan," "project plan," "task breakdown," or "schedule from SOW."
 ---
 
 # Bellwether Workplan Generator
@@ -9,7 +9,6 @@ Reads a SOW or project description, infers the task structure and schedule, and 
 
 ## Contents
 - Workflow
-- workplan.json Schema
 - Edge Cases
 
 ---
@@ -33,41 +32,25 @@ If any of the following are missing, ask in a single message before proceeding:
 > 2. What is the final deadline or project end date?
 > 3. Who are the team members? (up to 5 names)
 > 4. What is the cost code? (or skip)
-> 5. Any PTO, holidays, or OOO dates to block off? Paste as a list."
+> 5. Any PTO, holidays, significant work travel, or OOO dates to block off? Paste as a list."
 
 Do not proceed to Step 3 until both dates are confirmed. Start date is required; end date is required. If start date is missing, use the next business day from today and flag it as a placeholder.
 
 ### Step 3: Extract project structure
 
 Identify and list:
-- **Phases**: Named project phases or stages. If not explicitly named, infer from deliverables and headings. Fallback: "Discovery / Development / Delivery."
+- **Phases**: Named project phases or stages. If not explicitly named, infer from deliverables and headings. Fallback: "Phase 0 - Setup / Phase 1 - Factbase / Phase 2 - Client Support / Phase 3 - Strategy Development / Phase 4 - Client Support / Phase 5 - Implementation Planning."
 - **Workstreams**: Recurring work categories within phases (e.g., "Research," "Stakeholder Engagement," "Communications"). Set to null if not applicable.
 - **Tasks**: One action verb per task. Decompose deliverables into their constituent tasks (e.g., "Draft report" → "Write draft," "Internal review," "Revise and finalize"). Extract enough tasks to fill the schedule.
 - **Dependencies**: Which tasks must finish before others can start. Record as task ID references.
 - **Owners**: Assign by name if the SOW specifies. Otherwise set to null.
-- **Milestones**: Deliverables due to the client or external parties (`type: "external"`), internal checkpoints like reviews or presentations (`type: "internal"`).
+- **Milestones**: Deliverables due to the client or external parties (`type: "external"`), internal checkpoints like reviews (`type: "internal"`).
 
 Note any structural inferences in the task `notes` field (e.g., "Inferred from 'Phase 2 deliverable' language in SOW section 3").
 
 ### Step 4: Estimate durations
 
-Use `references/estimation-guide.md` as your primary reference. Key heuristics:
-
-- Kickoff meeting: 1–2 days
-- Per stakeholder interview: 1 day (active); add 2–3 days scheduling lag per round
-- Desk/literature review (broad): 5–10 days
-- Interview synthesis (per 5–8 interviews): 3–5 days
-- Draft report (per 10–15 pages): 5–10 days
-- Draft deck (per 15–20 slides): 3–5 days
-- Internal review round: 2–3 days
-- Client/external review: 3–5 days
-- Revisions (light): 1–2 days; (major rework): 3–5 days
-- Delivery/presentation: 1 day
-- PM overhead: 0.5 days/week ongoing
-
-Default to **3 business days** for any task without a matching heuristic, and note the assumption.
-
-Sum all durations as `estimated_total_days`.
+Use `references/estimation-guide.md` as your primary reference. Default to **3 business days** for any task without a matching heuristic, and note the assumption. Sum all durations as `estimated_total_days`.
 
 ### Step 5: Check feasibility and assign dates
 
@@ -114,7 +97,7 @@ For each calendar week from `start_date` through `end_date` (week starting Monda
 
 ### Step 7: Write workplan.json
 
-Write the complete JSON to `workplan.json`. Before finalizing, verify:
+Write the complete JSON to `workplan.json`. See `references/workplan-schema.md` for the full schema with field notes. Before finalizing, verify:
 
 - [ ] All task IDs are unique
 - [ ] No `dependencies` reference an ID that doesn't exist
@@ -127,81 +110,15 @@ Write the complete JSON to `workplan.json`. Before finalizing, verify:
 
 ### Step 8: Run the script
 
+This script uses the `workplan.json` to fill in an Excel template set up by the user:
+
 ```bash
-python bw-workplan/generate_workplan.py workplan.json [project-name]-workplan.xlsx
+python bw-strat-workplan/scripts/generate_workplan.py workplan.json [project-name]-workplan.xlsx
 ```
 
-Share the output `.xlsx` file with the user. If `feasibility_flag` is not `"ok"`, call it out explicitly:
+Save the output `.xlsx` file to the user's workspace directory so they can access it. Share it with the user. If `feasibility_flag` is not `"ok"`, call it out explicitly:
 
 > "Note: This timeline is **[tight / infeasible]**. [feasibility_note]. The workplan has been generated anyway — a warning banner appears at the top of the Detailed Workplan tab."
-
----
-
-## workplan.json Schema
-
-```json
-{
-  "metadata": {
-    "project_name": "string",
-    "generated_date": "YYYY-MM-DD",
-    "source_document": "filename or 'pasted text'",
-    "notes": "top-level assumptions or caveats"
-  },
-  "project": {
-    "name": "string",
-    "cost_code": "string or null",
-    "team_members": ["Alice", "Bob", "", "", ""]
-  },
-  "calendar": {
-    "start_date": "YYYY-MM-DD",
-    "end_date": "YYYY-MM-DD",
-    "available_business_days": 47,
-    "estimated_total_days": 38,
-    "feasibility_flag": "ok",
-    "feasibility_note": "38 estimated days fit comfortably within 47 available days.",
-    "pto_dates": ["YYYY-MM-DD"]
-  },
-  "tasks": [
-    {
-      "id": "T01",
-      "phase": "Phase 1: Discovery",
-      "workstream": "Research",
-      "task": "Conduct kickoff meeting",
-      "owner": "Alice",
-      "duration_days": 1,
-      "dependencies": [],
-      "start_date": "2025-03-03",
-      "start_date_display": "3/3/2025",
-      "deadline": "2025-03-03",
-      "deadline_display": "3/3/2025",
-      "notes": null
-    }
-  ],
-  "milestones": [
-    {
-      "name": "Kickoff",
-      "type": "internal",
-      "date": "2025-03-03",
-      "date_display": "3/3/2025"
-    }
-  ],
-  "timeline": [
-    {
-      "week_start": "2025-03-03",
-      "week_display": "3/3/2025",
-      "internal_meetings": "Kickoff (Mon 3/3)",
-      "external_meetings": "",
-      "phase": "Phase 1: Discovery",
-      "key_activities": "Kickoff meeting, begin desk research",
-      "deadlines_milestones": "Kickoff",
-      "pto": "",
-      "team_capacity": ["", "", "", "", ""]
-    }
-  ]
-}
-```
-
-`team_capacity` must always have exactly 5 elements, one per position in `project.team_members`, even if the project has fewer than 5 team members.
 
 ---
 
@@ -213,7 +130,7 @@ Share the output `.xlsx` file with the user. If `feasibility_flag` is not `"ok"`
 | No end date | Ask for it; do not proceed without it |
 | No OOO/PTO | Set `pto_dates: []`; note "all business days treated as available" |
 | Infeasible timeline | Set flag and note; still generate the file; warning banner appears in workplan |
-| No phases in SOW | Infer from headings and deliverables; fallback: Discovery / Development / Delivery |
+| No phases in SOW | Infer from headings and deliverables; fallback: Phase 0 - Setup / Phase 1 - Factbase / Phase 2 - Client Support / Phase 3 - Strategy Development / Phase 4 - Client Support / Phase 5 - Implementation Planning |
 | No workstreams | Set `workstream: null`; leave Workstream column blank |
 | No owners named | Set `owner: null`; leave Owner column blank |
 | No cost code | Set `cost_code: null`; leave cell blank |
